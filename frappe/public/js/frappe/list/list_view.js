@@ -286,8 +286,19 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 				}))
 		);
 
-		// limit to 4 columns
-		this.columns = this.columns.slice(0, 4);
+		// limit max to 8 columns
+		// Screen with low density no of columns 4
+		// Screen with medium density no of columns 6
+		// Screen with high density no of columns 8
+		let column_count = 6;
+
+		if (window.innerWidth <= 1200) {
+			column_count = 4;
+		} else if (window.innerWidth > 1440) {
+			column_count = 8;
+		}
+
+		this.columns = this.columns.slice(0, column_count);
 	}
 
 	get_no_result_message() {
@@ -379,7 +390,19 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 		});
 	}
 
+	after_render() {
+		this.list_sidebar.reload_stats();
+	}
+
 	render() {
+		this.render_list();
+		this.on_row_checked();
+		this.render_count();
+		this.render_tags();
+	}
+
+	render_list() {
+		// clear rows
 		this.$result.find('.list-row-container').remove();
 		if (this.data.length > 0) {
 			// append rows
@@ -390,9 +413,6 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 				}).join('')
 			);
 		}
-		this.on_row_checked();
-		this.render_count();
-		this.render_tags();
 	}
 
 	render_count() {
@@ -427,7 +447,7 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 
 			tag_editor.wrapper.on('click', '.tagit-label', (e) => {
 				const $this = $(e.currentTarget);
-				this.filter_area.add(this.doctype, '_user_tags', '=', $this.text());
+				this.filter_area.add('Tag Link', 'tag', '=', $this.text());
 			});
 		});
 	}
@@ -520,13 +540,8 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 		const fieldname = df.fieldname;
 		const value = doc[fieldname] || '';
 
-		// listview_setting formatter
-		const formatters = this.settings.formatters;
-
 		const format = () => {
-			if (formatters && formatters[fieldname]) {
-				return formatters[fieldname](value, df, doc);
-			} else if (df.fieldtype === 'Code') {
+			if (df.fieldtype === 'Code') {
 				return value;
 			} else if (df.fieldtype === 'Percent') {
 				return `<div class="progress level" style="margin: 0px;">
@@ -542,7 +557,13 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 
 		const field_html = () => {
 			let html;
-			const _value = typeof value === 'string' ? frappe.utils.escape_html(value) : value;
+			let _value;
+			// listview_setting formatter
+			if (this.settings.formatters && this.settings.formatters[fieldname]) {
+				_value = this.settings.formatters[fieldname](value, df, doc);
+			} else {
+				_value = typeof value === 'string' ? frappe.utils.escape_html(value) : value;
+			}
 
 			if (df.fieldtype === 'Image') {
 				html = df.options ?
@@ -560,7 +581,7 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 					data-filter="${fieldname},=,${value}">
 					${_value}
 				</a>`;
-			} else if (df.fieldtype === 'Text Editor') {
+			} else if (['Text Editor', 'Text', 'Small Text', 'HTML Editor'].includes(df.fieldtype)) {
 				html = `<span class="text-muted ellipsis">
 					${_value}
 				</span>`;
@@ -572,7 +593,7 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 			}
 
 			return `<span class="ellipsis"
-				title="${__(label) + ': ' + _value}">
+				title="${__(label)}: ${escape(_value)}">
 				${html}
 			</span>`;
 		};
@@ -655,7 +676,9 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 	}
 
 	get_count_str() {
-		const current_count = this.data.length;
+		let current_count = this.data.length;
+		let count_without_children = this.data.uniqBy(d => d.name).length;
+
 		const filters = this.get_filters_for_args();
 		const with_child_table_filter = filters.some(filter => {
 			return filter[0] !== this.doctype;
@@ -676,7 +699,10 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 			}
 		}).then(r => {
 			this.total_count = r.message.values[0][0] || current_count;
-			const str = __('{0} of {1}', [current_count, this.total_count]);
+			let str = __('{0} of {1}', [current_count, this.total_count]);
+			if (count_without_children !== current_count) {
+				str = __('{0} of {1} ({2} rows with children)', [count_without_children, this.total_count, current_count]);
+			}
 			return str;
 		});
 	}
@@ -697,7 +723,7 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 		let user = frappe.session.user;
 		let subject_field = this.columns[0].df;
 		let value = doc[subject_field.fieldname] || doc.name;
-		let subject = strip_html(value);
+		let subject = strip_html(value.toString());
 		let escaped_subject = frappe.utils.escape_html(subject);
 
 		const liked_by = JSON.parse(doc._liked_by || '[]');
@@ -979,7 +1005,13 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 	}
 
 	setup_new_doc_event() {
-		this.$no_result.find('.btn-new-doc').click(() => this.make_new_doc());
+		this.$no_result.find('.btn-new-doc').click(() => {
+			if (this.settings.primary_action) {
+				this.settings.primary_action();
+			} else {
+				this.make_new_doc();
+			}
+		});
 	}
 
 	setup_tag_event() {
@@ -1014,7 +1046,7 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 						// in the listview according to filters applied
 						// let's remove it manually
 						this.data = this.data.filter(d => d.name !== name);
-						this.render();
+						this.render_list();
 						return;
 					}
 
@@ -1048,9 +1080,20 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 						return return_value;
 					});
 					this.toggle_result_area();
-					this.render();
+					this.render_list();
+					if (this.$checks.length) {
+						this.set_rows_as_checked();
+					}
 				});
 		});
+	}
+
+	set_rows_as_checked() {
+		$.each(this.$checks, (i, el) => {
+			let docname = $(el).attr('data-name');
+			this.$result.find(`.list-row-checkbox[data-name='${docname}']`).prop('checked', true);
+		});
+		this.on_row_checked();
 	}
 
 	on_row_checked() {
@@ -1289,6 +1332,14 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 			};
 		};
 
+		const bulk_assignment_rule = () => {
+			return {
+				label: __('Apply Assignment Rule'),
+				action: () => bulk_operations.apply_assignment_rule(this.get_checked_items(true), this.refresh),
+				standard: true
+			};
+		};
+
 		const bulk_printing = () => {
 			return {
 				label: __('Print'),
@@ -1365,18 +1416,20 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 		// bulk assignment
 		actions_menu_items.push(bulk_assignment());
 
+		actions_menu_items.push(bulk_assignment_rule());
+
 		// bulk printing
 		if (frappe.model.can_print(doctype)) {
 			actions_menu_items.push(bulk_printing());
 		}
 
 		// bulk submit
-		if (frappe.model.is_submittable(doctype) && has_submit_permission(doctype)) {
+		if (frappe.model.is_submittable(doctype) && has_submit_permission(doctype) && !(frappe.model.has_workflow(doctype))) {
 			actions_menu_items.push(bulk_submit());
 		}
 
 		// bulk cancel
-		if (frappe.model.can_cancel(doctype)) {
+		if (frappe.model.can_cancel(doctype) && !(frappe.model.has_workflow(doctype))) {
 			actions_menu_items.push(bulk_cancel());
 		}
 

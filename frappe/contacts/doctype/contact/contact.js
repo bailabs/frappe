@@ -41,13 +41,46 @@ frappe.ui.form.on("Contact", {
 			}
 		});
 		frm.refresh_field("links");
+
+		if (frm.doc.links.length > 0) {
+			frappe.call({
+				method: "frappe.contacts.doctype.contact.contact.address_query",
+				args: {links: frm.doc.links},
+				callback: function(r) {
+					if (r && r.message) {
+						frm.set_query("address", function () {
+							return {
+								filters: {
+									name: ["in", r.message],
+								}
+							}
+						});
+					}
+				}
+			});
+		}
 	},
 	validate: function(frm) {
+		if (frm.doc.third_party_shipping == "YES"){
+			if(!(frm.doc.ups_account_no && frm.doc.usps_billing_address)){
+               frappe.throw("Must enter UPS account and billing address")
+			}
+		}
 		// clear linked customer / supplier / sales partner on saving...
 		if(frm.doc.links) {
 			frm.doc.links.forEach(function(d) {
 				frappe.model.remove_from_locals(d.link_doctype, d.link_name);
 			});
+		}
+	},
+	third_party_shipping:function(frm){
+		if(frm.doc.third_party_shipping =="YES"){
+			frappe.model.set_value(frm.doc.doctype, frm.doc.name, "usps_shipping", 0);
+			cur_frm.refresh_field("usps_shipping");
+		}
+		else{
+			frappe.model.set_value(frm.doc.doctype, frm.doc.name, "usps_shipping", 1);
+			cur_frm.refresh_field("usps_shipping");
 		}
 	},
 	after_save: function(frm) {
@@ -61,6 +94,15 @@ frappe.ui.form.on("Contact", {
 				}
 			}
 		]);
+	},
+	sync_with_google_contacts: function(frm) {
+		if (frm.doc.sync_with_google_contacts) {
+			frappe.db.get_value("Google Contacts", {"email_id": frappe.session.user}, "name", (r) => {
+				if (r && r.name) {
+					frm.set_value("google_contacts", r.name);
+				}
+			})
+		}
 	}
 });
 

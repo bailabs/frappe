@@ -4,7 +4,7 @@
 from __future__ import unicode_literals
 
 import frappe
-import os, json, datetime
+import os, json
 
 from frappe import _
 from frappe.modules import scrub, get_module_path
@@ -63,38 +63,21 @@ def generate_report_result(report, filters=None, user=None):
 
 		result = [list(t) for t in frappe.db.sql(report.query, filters)]
 		columns = [cstr(c[0]) for c in frappe.db.get_description()]
-	else:
-		module = report.module or frappe.db.get_value("DocType", report.ref_doctype, "module")
-		if report.is_standard == "Yes":
-			method_name = get_report_module_dotted_path(module, report.name) + ".execute"
-			threshold = 30
-			res = []
 
-			start_time = datetime.datetime.now()
-			# The JOB
-			res = frappe.get_attr(method_name)(frappe._dict(filters))
+	elif report.report_type == 'Script Report':
+		res = report.execute_script_report(filters)
 
-			end_time = datetime.datetime.now()
+		columns, result = res[0], res[1]
+		if len(res) > 2:
+			message = res[2]
+		if len(res) > 3:
+			chart = res[3]
+		if len(res) > 4:
+			data_to_be_printed = res[4]
 
-			execution_time = (end_time - start_time).seconds
-
-			if execution_time > threshold and not report.prepared_report:
-				report.db_set('prepared_report', 1)
-
-			frappe.cache().hset('report_execution_time', report.name, execution_time)
-
-			columns, result = res[0], res[1]
-			if len(res) > 2:
-				message = res[2]
-			if len(res) > 3:
-				chart = res[3]
-			if len(res) > 4:
-				data_to_be_printed = res[4]
-
-
-			if report.custom_columns:
-				columns = json.loads(report.custom_columns)
-				result = add_data_to_custom_columns(columns, result)
+		if report.custom_columns:
+			columns = json.loads(report.custom_columns)
+			result = add_data_to_custom_columns(columns, result)
 
 	if result:
 		result = get_filtered_data(report.ref_doctype, columns, result, user)
@@ -307,6 +290,7 @@ def export_query():
 	if isinstance(data.get("file_format_type"), string_types):
 		file_format_type = data["file_format_type"]
 
+	include_indentation = data["include_indentation"]
 	if isinstance(data.get("visible_idx"), string_types):
 		visible_idx = json.loads(data.get("visible_idx"))
 	else:
@@ -318,7 +302,7 @@ def export_query():
 		columns = get_columns_dict(data.columns)
 
 		from frappe.utils.xlsxutils import make_xlsx
-		xlsx_data = build_xlsx_data(columns, data, visible_idx)
+		xlsx_data = build_xlsx_data(columns, data, visible_idx, include_indentation)
 		xlsx_file = make_xlsx(xlsx_data, "Query Report")
 
 		frappe.response['filename'] = report_name + '.xlsx'
@@ -326,7 +310,7 @@ def export_query():
 		frappe.response['type'] = 'binary'
 
 
-def build_xlsx_data(columns, data, visible_idx):
+def build_xlsx_data(columns, data, visible_idx,include_indentation):
 	result = [[]]
 
 	# add column headings
@@ -344,7 +328,7 @@ def build_xlsx_data(columns, data, visible_idx):
 					label = columns[idx]["label"]
 					fieldname = columns[idx]["fieldname"]
 					cell_value = row.get(fieldname, row.get(label, ""))
-					if 'indent' in row and idx == 0:
+					if cint(include_indentation) and 'indent' in row and idx == 0:
 						cell_value = ('    ' * cint(row['indent'])) + cell_value
 					row_data.append(cell_value)
 			else:
@@ -353,11 +337,6 @@ def build_xlsx_data(columns, data, visible_idx):
 			result.append(row_data)
 
 	return result
-
-
-def get_report_module_dotted_path(module, report_name):
-	return frappe.local.module_app[scrub(module)] + "." + scrub(module) \
-		+ ".report." + scrub(report_name) + "." + scrub(report_name)
 
 def add_total_row(result, columns, meta = None):
 	total_row = [""]*len(columns)
@@ -561,7 +540,7 @@ def get_linked_doctypes(columns, data):
 	for idx, col in enumerate(columns):
 		df = columns_dict[idx]
 		if df.get("fieldtype")=="Link":
-			if isinstance(col, string_types):
+			if data and isinstance(data[0], (list, tuple)):
 				linked_doctypes[df["options"]] = idx
 			else:
 				# dict

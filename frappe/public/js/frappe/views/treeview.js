@@ -62,7 +62,7 @@ frappe.views.TreeView = Class.extend({
 
 		this.page = this.parent.page;
 		frappe.container.change_to(this.page_name);
-		frappe.breadcrumbs.add(me.opts.breadcrumb || locals.DocType[me.doctype].module);
+		frappe.breadcrumbs.add(me.opts.breadcrumb || locals.DocType[me.doctype].module, me.doctype);
 
 		this.set_title();
 
@@ -335,6 +335,15 @@ frappe.views.TreeView = Class.extend({
 		frappe.ui.get_print_settings(false, function(print_settings) {
 			var title =  __(me.docname || me.doctype);
 			frappe.render_tree({title: title, tree: tree, print_settings:print_settings});
+			frappe.call({
+				method: "frappe.core.doctype.access_log.access_log.make_access_log",
+				args: {
+					doctype: me.doctype,
+					report_name: me.page_name,
+					page: tree,
+					method: 'Print'
+				}
+			});
 		});
 	},
 	set_primary_action: function(){

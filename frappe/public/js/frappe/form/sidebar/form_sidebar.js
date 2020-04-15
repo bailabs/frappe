@@ -36,6 +36,7 @@ frappe.ui.form.Sidebar = Class.extend({
 
 		this.bind_events();
 		this.setup_keyboard_shortcuts();
+		this.show_auto_repeat_status();
 		frappe.ui.form.setup_user_image_event(this.frm);
 
 		this.refresh();
@@ -75,7 +76,7 @@ frappe.ui.form.Sidebar = Class.extend({
 			this.frm.shared.refresh();
 			this.frm.follow.refresh();
 			this.frm.viewers.refresh();
-			this.frm.tags && this.frm.tags.refresh(this.frm.doc._user_tags);
+			this.frm.tags && this.frm.tags.refresh(this.frm.get_docinfo().tags);
 			this.sidebar.find(".modified-by").html(__("{0} edited this {1}",
 				["<strong>" + frappe.user.full_name(this.frm.doc.modified_by) + "</strong>",
 					"<br>" + comment_when(this.frm.doc.modified)]));
@@ -88,6 +89,28 @@ frappe.ui.form.Sidebar = Class.extend({
 		}
 	},
 
+	show_auto_repeat_status: function() {
+		if (this.frm.meta.allow_auto_repeat && this.frm.doc.auto_repeat) {
+			const me = this;
+			frappe.call({
+				method: "frappe.client.get_value",
+				args:{
+					doctype: "Auto Repeat",
+					filters: {
+						name: this.frm.doc.auto_repeat
+					},
+					fieldname: ["frequency"]
+				},
+				callback: function(res) {
+					me.sidebar.find(".auto-repeat-status").html(__("Repeats {0}", [res.message.frequency]));
+					me.sidebar.find(".auto-repeat-status").on("click", function(){
+						frappe.set_route("Form", "Auto Repeat", me.frm.doc.auto_repeat);
+					});
+				}
+			});
+		}
+	},
+
 	refresh_comments: function() {
 		$.map(this.frm.timeline.get_communications(), function(c) {
 			return (c.communication_type==="Communication" || (c.communication_type=="Comment" && c.comment_type==="Comment")) ? c : null;
@@ -96,7 +119,6 @@ frappe.ui.form.Sidebar = Class.extend({
 	},
 
 	make_tags: function() {
-		var me = this;
 		if (this.frm.meta.issingle) {
 			this.sidebar.find(".form-tags").toggle(false);
 			return;
@@ -106,7 +128,7 @@ frappe.ui.form.Sidebar = Class.extend({
 			parent: this.sidebar.find(".tag-area"),
 			frm: this.frm,
 			on_change: function(user_tags) {
-				me.frm.doc._user_tags = user_tags;
+				this.frm.tags && this.frm.tags.refresh(user_tags);
 			}
 		});
 	},
@@ -193,7 +215,7 @@ frappe.ui.form.Sidebar = Class.extend({
 			callback: (r) => {
 				// docinfo will be synced
 				if(callback) callback(r.docinfo);
-				this.frm.timeline.refresh();
+				this.frm.timeline && this.frm.timeline.refresh();
 				this.frm.assign_to.refresh();
 				this.frm.attachments.refresh();
 			}

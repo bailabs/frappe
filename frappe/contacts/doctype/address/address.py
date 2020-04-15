@@ -42,6 +42,40 @@ class Address(Document):
 		self.validate_reference()
 		set_link_title(self)
 		deduplicate_dynamic_links(self)
+		if self.address_type != "Billing":
+			doc = frappe.get_all("Sales Order",filters={'shipping_address_name':self.name},fields=['*'])
+			if len(doc) > 0:
+				for d in doc:
+					if d.docstatus == 1:
+						frappe.msgprint("could not update address it is linked to submitted order(s)")
+						frappe.throw("update failed")
+			doc2 = frappe.get_all("Sales Order",filters={'customer_address':self.name},fields=['*'])
+			if len(doc2) > 0:
+				for d in doc2:
+					if d.docstatus == 1:
+						frappe.msgprint("could not update address it is linked to submitted order(s)")
+						frappe.throw("update failed")
+		#remove leading and trailing white spaces 
+		self.state=self.state.strip()
+		self.pincode=self.pincode.strip()
+		self.address_title = self.address_title.strip()
+		self.address_line1=self.address_line1.strip()
+		try:
+			if frappe.db.exists("US States",self.state):
+				pass
+			elif self.country_code != "US":
+				doc  =frappe.get_doc({
+					"doctype":"US States",
+					"name1":self.state,
+					"abb":self.abb,
+					"zip":self.pincode,
+					"mp_channel":"GA"
+				})
+				doc.save(ignore_permissions=True)
+			else:
+				frappe.throw("Invalid state name please check spellings")
+		except:
+			frappe.throw("Invalid state name please check spellings")
 
 	def link_address(self):
 		"""Link address based on owner"""
@@ -143,34 +177,14 @@ def get_list_context(context=None):
 	}
 
 def get_address_list(doctype, txt, filters, limit_start, limit_page_length = 20, order_by = None):
-    from frappe.www.list import get_list
-    user = frappe.session.user
-    ignore_permissions = False
-    if is_website_user():
-        if not filters: filters = []
-        add_name = []
-        contact = frappe.db.sql("""
-			select
-				address.name
-			from
-				`tabDynamic Link` as link
-			join
-				`tabAddress` as address on link.parent = address.name
-			where
-				link.parenttype = 'Address' and
-				link_name in(
-				   select
-					   link.link_name from `tabContact` as contact
-				   join
-					   `tabDynamic Link` as link on contact.name = link.parent
-				   where
-					   contact.user = %s)""",(user))
-        for c in contact:
-            add_name.append(c[0])
-        filters.append(("Address", "name", "in", add_name))
-        ignore_permissions = True
+	from frappe.www.list import get_list
+	user = frappe.session.user
+	ignore_permissions = True
 
-    return get_list(doctype, txt, filters, limit_start, limit_page_length, ignore_permissions=ignore_permissions)
+	if not filters: filters = []
+	filters.append(("Address", "owner", "=", user))
+
+	return get_list(doctype, txt, filters, limit_start, limit_page_length, ignore_permissions=ignore_permissions)
 
 def has_website_permission(doc, ptype, user, verbose=False):
 	"""Returns true if there is a related lead or contact related to this document"""
@@ -237,6 +251,19 @@ def address_query(doctype, txt, searchfield, start, page_len, filters):
 			value=value
 		)
 
+	meta = frappe.get_meta("Address")
+	searchfields = meta.get_search_fields()
+
+	if searchfield:
+		searchfields.append(searchfield)
+
+	search_condition = ''
+	for field in searchfields:
+		if search_condition == '':
+			search_condition += '`tabAddress`.`{field}` like %(txt)s'.format(field=field)
+		else:
+			search_condition += ' or `tabAddress`.`{field}` like %(txt)s'.format(field=field)
+
 	return frappe.db.sql("""select
 			`tabAddress`.name, `tabAddress`.city, `tabAddress`.country
 		from
@@ -247,7 +274,7 @@ def address_query(doctype, txt, searchfield, start, page_len, filters):
 			`tabDynamic Link`.link_doctype = %(link_doctype)s and
 			`tabDynamic Link`.link_name = %(link_name)s and
 			ifnull(`tabAddress`.disabled, 0) = 0 and
-			`tabAddress`.`{key}` like %(txt)s
+			({search_condition})
 			{mcond} {condition}
 		order by
 			if(locate(%(_txt)s, `tabAddress`.name), locate(%(_txt)s, `tabAddress`.name), 99999),
@@ -255,6 +282,7 @@ def address_query(doctype, txt, searchfield, start, page_len, filters):
 		limit %(start)s, %(page_len)s """.format(
 			mcond=get_match_cond(doctype),
 			key=searchfield,
+			search_condition = search_condition,
 			condition=condition or ""), {
 			'txt': '%' + txt + '%',
 			'_txt': txt.replace("%", ""),
@@ -263,3 +291,24 @@ def address_query(doctype, txt, searchfield, start, page_len, filters):
 			'link_name': link_name,
 			'link_doctype': link_doctype
 		})
+
+def get_condensed_address(doc):
+	fields = ["address_title", "address_line1", "address_line2", "city", "county", "state", "country"]
+	return ", ".join([doc.get(d) for d in fields if doc.get(d)])
+
+
+@frappe.whitelist()
+def insert_address():
+	f = open("/home/address.sql", "r")
+	count=0
+	for x in f:
+		try:
+			frappe.db.sql(x)
+			frappe.db.commit()
+			
+		except Exception as e:
+			print(_('Failed : '+ str(e)))
+		count+=1
+		print(count)
+def address_query_billing(address_type, link_doctype, link_name):
+	return frappe.get_all("Address",filters={'address_type':"Billing"},fields=["name"])

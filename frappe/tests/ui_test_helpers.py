@@ -18,6 +18,7 @@ def create_if_not_exists(doc):
 
 	names = []
 	for doc in docs:
+		doc = frappe._dict(doc)
 		filters = doc.copy()
 		filters.pop('doctype')
 		name = frappe.db.exists(doc.doctype, filters)
@@ -58,7 +59,7 @@ def create_todo_records():
 
 @frappe.whitelist()
 def setup_workflow():
-  from frappe.workflow.doctype.workflow.test_workflow import create_todo_workflow
-  create_todo_workflow()
-  create_todo_records()
-  frappe.clear_cache()
+	from frappe.workflow.doctype.workflow.test_workflow import create_todo_workflow
+	create_todo_workflow()
+	create_todo_records()
+	frappe.clear_cache()

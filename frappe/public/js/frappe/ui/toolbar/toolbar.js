@@ -15,6 +15,7 @@ frappe.ui.toolbar.Toolbar = Class.extend({
 		awesome_bar.setup("#navbar-search");
 		awesome_bar.setup("#modal-search");
 
+		this.setup_notifications();
 		this.make();
 	},
 
@@ -28,10 +29,6 @@ frappe.ui.toolbar.Toolbar = Class.extend({
 	},
 
 	bind_events: function() {
-		$(document).on("notification-update", function() {
-			frappe.ui.notifications.update_notifications();
-		});
-
 		// clear all custom menus on page change
 		$(document).on("page-change", function() {
 			$("header .navbar .custom-menu").remove();
@@ -157,7 +154,12 @@ frappe.ui.toolbar.Toolbar = Class.extend({
 				e.preventDefault();
 			}
 		}
+	},
+
+	setup_notifications: function() {
+		this.notifications = new frappe.ui.Notifications();
 	}
+
 });
 
 $.extend(frappe.ui.toolbar, {
@@ -213,19 +215,16 @@ $.extend(frappe.ui.toolbar, {
 	},
 });
 
-frappe.ui.toolbar.clear_cache = function() {
+frappe.ui.toolbar.clear_cache = frappe.utils.throttle(function() {
 	frappe.assets.clear_local_storage();
-	frappe.call({
-		method: 'frappe.sessions.clear',
-		callback: function(r) {
-			if(!r.exc) {
-				frappe.show_alert({message:r.message, indicator:'green'});
-				location.reload(true);
-			}
-		}
+	frappe.xcall('frappe.sessions.clear').then(message => {
+		frappe.show_alert({
+			message: message,
+			indicator: 'green'
+		});
+		location.reload(true);
 	});
-	return false;
-};
+}, 10000);
 
 frappe.ui.toolbar.show_about = function() {
 	try {
@@ -234,4 +233,57 @@ frappe.ui.toolbar.show_about = function() {
 		console.log(e);
 	}
 	return false;
+};
+
+frappe.ui.toolbar.setup_session_defaults = function() {
+	let fields = [];
+	frappe.call({
+		method: 'frappe.core.doctype.session_default_settings.session_default_settings.get_session_default_values',
+		callback: function (data) {
+			fields = JSON.parse(data.message);
+			let perms = frappe.perm.get_perm('Session Default Settings');
+			//add settings button only if user is a System Manager or has permission on 'Session Default Settings'
+			if ((in_list(frappe.user_roles, 'System Manager')) || (perms[0].read == 1))  {
+				fields[fields.length] = {
+					'fieldname': 'settings',
+					'fieldtype': 'Button',
+					'label': __('Settings'),
+					'click': () => {
+						frappe.set_route('Form', 'Session Default Settings', 'Session Default Settings');
+					}
+				};
+			}
+			frappe.prompt(fields, function(values) {
+				//if default is not set for a particular field in prompt
+				fields.forEach(function(d) {
+					if (!values[d.fieldname]) {
+						values[d.fieldname] = "";
+					}
+				});
+				frappe.call({
+					method: 'frappe.core.doctype.session_default_settings.session_default_settings.set_session_default_values',
+					args: {
+						default_values: values,
+					},
+					callback: function(data) {
+						if (data.message == "success") {
+							frappe.show_alert({
+								'message': __('Session Defaults Saved'),
+								'indicator': 'green'
+							});
+							frappe.ui.toolbar.clear_cache();
+						}	else {
+							frappe.show_alert({
+								'message': __('An error occurred while setting Session Defaults'),
+								'indicator': 'red'
+							});
+						}
+					}
+				});
+			},
+			__('Session Defaults'),
+			__('Save'),
+			);
+		}
+	});
 };

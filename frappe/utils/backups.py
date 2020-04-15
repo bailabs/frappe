@@ -32,7 +32,7 @@ class BackupGenerator:
 		self.backup_path_db = backup_path_db
 		self.backup_path_private_files = backup_path_private_files
 
-	def get_backup(self, older_than=24, ignore_files=False, force=False, encrypt=False, automated_backup=None):
+	def get_backup(self, older_than=24, ignore_files=False, force=False):
 		"""
 			Takes a new dump if existing file is old
 			and sends the link to the file as email
@@ -48,7 +48,7 @@ class BackupGenerator:
 			self.set_backup_file_name()
 
 		if not (last_db and last_file and last_private_file):
-			self.take_dump(encrypt=encrypt, automated_backup=automated_backup)
+			self.take_dump()
 			if not ignore_files:
 				self.zip_files()
 
@@ -63,7 +63,7 @@ class BackupGenerator:
 		site = site.replace('.', '_')
 
 		#Generate a random name using today's date and a 8 digit random number
-		for_db = todays_date + "-" + site + "-database.sql"
+		for_db = todays_date + "-" + site + "-database.sql.gz"
 		for_public_files = todays_date + "-" + site + "-files.tar"
 		for_private_files = todays_date + "-" + site + "-private-files.tar"
 		backup_path = get_backup_path()
@@ -104,44 +104,15 @@ class BackupGenerator:
 
 			print('Backed up files', os.path.abspath(backup_path))
 
-	def take_dump(self, encrypt=False, automated_backup=None):
+	def take_dump(self):
 		import frappe.utils
 
 		# escape reserved characters
 		args = dict([item[0], frappe.utils.esc(item[1], '$ ')]
 			for item in self.__dict__.copy().items())
 
-		cmd_string = ""
-		if not automated_backup:
-			if encrypt:
-				file_name = args['backup_path_db'].split('/')
-				file_name = file_name[4]
-				file_name = file_name.replace('.sql', '.xb.enc')
-				args['backup_path_db'] = args['backup_path_db'].replace(args['backup_path_db'].split('/')[4], file_name)
-				args['encryption_password'] = frappe.utils.password.get_decrypted_password("System Settings","System Settings","password_encryption",False)
-				cmd_string = """mysqldump --single-transaction --quick --lock-tables=false -u %(user)s -p%(password)s %(db_name)s -h %(db_host)s --triggers --routines | openssl enc -aes-256-cbc -salt -k %(encryption_password)s > %(backup_path_db)s""" % args
-			else:
-				cmd_string = """mysqldump --single-transaction --quick --lock-tables=false -u %(user)s -p%(password)s %(db_name)s -h %(db_host)s > %(backup_path_db)s """ % args
-
-		elif automated_backup:
-			if frappe.get_doc("System Settings").enable_backup_encryption:
-				file_name = args['backup_path_db'].split('/')
-				file_name = file_name[4]
-				file_name = file_name.replace('.sql', '.xb.enc')
-				args['backup_path_db'] = args['backup_path_db'].replace(args['backup_path_db'].split('/')[4], file_name)
-				args['encryption_password'] = frappe.utils.password.get_decrypted_password("System Settings","System Settings","password_encryption",False)
-
-				cmd_string = """mysqldump --single-transaction --quick --lock-tables=false -u %(user)s -p%(password)s %(db_name)s -h %(db_host)s --triggers --routines | openssl enc -aes-256-cbc -salt -k %(encryption_password)s > %(backup_path_db)s""" % args
-
-			else:
-				cmd_string = """mysqldump --single-transaction --quick --lock-tables=false -u %(user)s -p%(password)s %(db_name)s -h %(db_host)s > %(backup_path_db)s """ % args
-
+		cmd_string = """mysqldump --single-transaction --quick --lock-tables=false -u %(user)s -p%(password)s %(db_name)s -h %(db_host)s | gzip > %(backup_path_db)s """ % args
 		err, out = frappe.utils.execute_in_shell(cmd_string)
-
-		cmd_string = 'gzip %(backup_path_db)s '% args
-		err, out = frappe.utils.execute_in_shell(cmd_string)
-
-		self.backup_path_db = "{0}.gz".format(self.backup_path_db)
 
 	def send_email(self):
 		"""
@@ -187,21 +158,21 @@ def get_backup():
 	recipient_list = odb.send_email()
 	frappe.msgprint(_("Download link for your backup will be emailed on the following email address: {0}").format(', '.join(recipient_list)))
 
-def scheduled_backup(older_than=6, ignore_files=False, backup_path_db=None, backup_path_files=None, backup_path_private_files=None, force=False, encrypt=False, automated_backup=False):
+def scheduled_backup(older_than=6, ignore_files=False, backup_path_db=None, backup_path_files=None, backup_path_private_files=None, force=False):
 	"""this function is called from scheduler
 		deletes backups older than 7 days
 		takes backup"""
-	odb = new_backup(older_than, ignore_files, backup_path_db=backup_path_db, backup_path_files=backup_path_files, force=force, encrypt=encrypt, automated_backup=automated_backup)
+	odb = new_backup(older_than, ignore_files, backup_path_db=backup_path_db, backup_path_files=backup_path_files, force=force)
 	return odb
 
-def new_backup(older_than=6, ignore_files=False, backup_path_db=None, backup_path_files=None, backup_path_private_files=None, force=False, encrypt=False, automated_backup=None):
+def new_backup(older_than=6, ignore_files=False, backup_path_db=None, backup_path_files=None, backup_path_private_files=None, force=False):
 	delete_temp_backups(older_than = frappe.conf.keep_backups_for_hours or 24)
 	odb = BackupGenerator(frappe.conf.db_name, frappe.conf.db_name,\
 						  frappe.conf.db_password,
 						  backup_path_db=backup_path_db, backup_path_files=backup_path_files,
 						  backup_path_private_files=backup_path_private_files,
 						  db_host = frappe.db.host)
-	odb.get_backup(older_than, ignore_files, force=force, encrypt=encrypt, automated_backup=automated_backup)
+	odb.get_backup(older_than, ignore_files, force=force)
 	return odb
 
 def delete_temp_backups(older_than=24):
@@ -277,4 +248,3 @@ if __name__ == "__main__":
 
 	if cmd == "delete_temp_backups":
 		delete_temp_backups()
-

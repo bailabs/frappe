@@ -25,6 +25,12 @@ import 'cypress-file-upload';
 // -- This is will overwrite an existing command --
 // Cypress.Commands.overwrite("visit", (originalFn, url, options) => { ... });
 Cypress.Commands.add('login', (email, password) => {
+	if (!email) {
+		email = 'Administrator';
+	}
+	if (!password) {
+		password = Cypress.config('adminPassword');
+	}
 	cy.request({
 		url: '/api/method/login',
 		method: 'POST',
@@ -48,6 +54,72 @@ Cypress.Commands.add('call', (method, args) => {
 			}
 		}).then(res => {
 			expect(res.status).eq(200);
+			return res.body;
+		});
+	});
+});
+
+Cypress.Commands.add('get_list', (doctype, fields=[], filters=[]) => {
+	return cy.window().its('frappe.csrf_token').then(csrf_token => {
+		return cy.request({
+			method: 'GET',
+			url: `/api/resource/${doctype}?fields=${JSON.stringify(fields)}&filters=${JSON.stringify(filters)}`,
+			headers: {
+				'Accept': 'application/json',
+				'X-Frappe-CSRF-Token': csrf_token
+			}
+		}).then(res => {
+			expect(res.status).eq(200);
+			return res.body;
+		});
+	});
+});
+
+Cypress.Commands.add('get_doc', (doctype, name) => {
+	return cy.window().its('frappe.csrf_token').then(csrf_token => {
+		return cy.request({
+			method: 'GET',
+			url: `/api/resource/${doctype}/${name}`,
+			headers: {
+				'Accept': 'application/json',
+				'X-Frappe-CSRF-Token': csrf_token
+			}
+		}).then(res => {
+			expect(res.status).eq(200);
+			return res.body;
+		});
+	});
+});
+
+Cypress.Commands.add('create_doc', (doctype, args) => {
+	return cy.window().its('frappe.csrf_token').then(csrf_token => {
+		return cy.request({
+			method: 'POST',
+			url: `/api/resource/${doctype}`,
+			body: args,
+			headers: {
+				'Accept': 'application/json',
+				'Content-Type': 'application/json',
+				'X-Frappe-CSRF-Token': csrf_token
+			}
+		}).then(res => {
+			expect(res.status).eq(200);
+			return res.body;
+		});
+	});
+});
+
+Cypress.Commands.add('remove_doc', (doctype, name) => {
+	return cy.window().its('frappe.csrf_token').then(csrf_token => {
+		return cy.request({
+			method: 'DELETE',
+			url: `/api/resource/${doctype}/${name}`,
+			headers: {
+				'Accept': 'application/json',
+				'X-Frappe-CSRF-Token': csrf_token
+			}
+		}).then(res => {
+			expect(res.status).eq(202);
 			return res.body;
 		});
 	});

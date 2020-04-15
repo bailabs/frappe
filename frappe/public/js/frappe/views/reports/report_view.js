@@ -225,7 +225,11 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 						// child table field
 						const [cdt, _field] = fieldname.split(':');
 						const cdt_row = Object.keys(doc)
-							.filter(key => Array.isArray(doc[key]) && doc[key][0].doctype === cdt)
+							.filter(key =>
+								Array.isArray(doc[key])
+								&& doc[key].length
+								&& doc[key][0].doctype === cdt
+							)
 							.map(key => doc[key])
 							.map(a => a[0])
 							.filter(cdoc => cdoc.name === d[cdt + ':name'])[0];
@@ -491,11 +495,14 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 			title: __("{0} Chart", [this.doctype]),
 			data: data,
 			type: args.chart_type,
+			truncateLegends: 1,
 			colors: ['#70E078', 'light-blue', 'orange', 'red'],
-
-			format_tooltip_x: value => value.doc.name,
-			format_tooltip_y:
-				value => frappe.format(value, get_df(value.field), { always_show_decimals: true, inline: true }, get_doc(value.doc))
+			axisOptions: {
+				shortenYAxisNumbers: 1
+			},
+			tooltipOptions: {
+				formatTooltipY: value => frappe.format(value, get_df(this.chart_args.y_axes[0]), { always_show_decimals: true, inline: true }, get_doc(value.doc))
+			}
 		});
 	}
 
@@ -525,15 +532,25 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 				control.set_value(value);
 				return this.set_control_value(doctype, docname, fieldname, value)
 					.then((updated_doc) => {
-						const _data = this.data.find(d => d.name === updated_doc.name);
+						const _data = this.data
+							.filter(b => b.name === updated_doc.name)
+							.find(a =>
+								// child table cell
+								(doctype != updated_doc.doctype && a[doctype + ":name"] == docname)
+								|| doctype == updated_doc.doctype
+							);
+
 						for (let field in _data) {
 							if (field.includes(':')) {
 								// child table field
 								const [cdt, _field] = field.split(':');
 								const cdt_row = Object.keys(updated_doc)
-									.filter(key => Array.isArray(updated_doc[key]) && updated_doc[key][0].doctype === cdt)
-									.map(key => updated_doc[key])
-									.map(a => a[0])
+									.filter(key =>
+										Array.isArray(updated_doc[key])
+										&& updated_doc[key].length
+										&& updated_doc[key][0].doctype === cdt
+									)
+									.map(key => updated_doc[key])[0]
 									.filter(cdoc => cdoc.name === _data[cdt + ':name'])[0];
 								if (cdt_row) {
 									_data[field] = cdt_row[_field];
@@ -754,21 +771,20 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 	get_columns_for_picker() {
 		let out = {};
 
-		const standard_fields_filter = df =>
-			!in_list(frappe.model.no_value_type, df.fieldtype) && !df.report_hide;
+		const standard_fields_filter = df => !in_list(frappe.model.no_value_type, df.fieldtype);
 
 		let doctype_fields = frappe.meta.get_docfields(this.doctype).filter(standard_fields_filter);
 
 		doctype_fields = [{
 			label: __('ID'),
 			fieldname: 'name',
-			fieldtype: 'Data'
+			fieldtype: 'Data',
+			reqd: 1
 		}].concat(doctype_fields, frappe.model.std_fields);
 
 		out[this.doctype] = doctype_fields;
 
-		const table_fields = frappe.meta.get_table_fields(this.doctype)
-			.filter(df => !df.hidden);
+		const table_fields = frappe.meta.get_table_fields(this.doctype);
 
 		table_fields.forEach(df => {
 			const cdt = df.options;
@@ -980,7 +996,7 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 					content: d[cdt_field(col.field)],
 					editable: Boolean(name && this.is_editable(col.docfield, d)),
 					format: value => {
-						return frappe.format(value, col.docfield, { always_show_decimals: true });
+						return frappe.format(value, col.docfield, { always_show_decimals: true }, d);
 					}
 				};
 			}
@@ -1152,7 +1168,7 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 					}
 
 					frappe.ui.get_print_settings(false, (print_settings) => {
-						var title =  __(this.doctype);
+						var title =  this.report_name || __(this.doctype);
 						frappe.render_grid({
 							title: title,
 							subtitle: this.get_filters_html_for_print(),
@@ -1214,27 +1230,32 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 				action: () => {
 					const args = this.get_args();
 					const selected_items = this.get_checked_items(true);
+					let fields = [
+						{
+							fieldtype: 'Select',
+							label: __('Select File Type'),
+							fieldname:'file_format_type',
+							options: ['Excel', 'CSV'],
+							default: 'Excel'
+						}
+					];
+
+					if (this.total_count > args.page_length) {
+						fields.push({
+							fieldtype: 'Check',
+							fieldname: 'export_all_rows',
+							label: __('Export All {0} rows?', [(this.total_count + "").bold()])
+						});
+					}
 
 					const d = new frappe.ui.Dialog({
 						title: __("Export Report: {0}",[__(this.doctype)]),
-						fields: [
-							{
-								fieldtype: 'Select',
-								label: __('Select File Type'),
-								fieldname:'file_format_type',
-								options: ['Excel', 'CSV'],
-								default: 'Excel'
-							},
-							{
-								fieldtype: 'Check',
-								fieldname: 'export_all_rows',
-								label: __('Export All {0} rows?', [(this.total_count + "").bold()])
-							}
-						],
+						fields: fields,
 						primary_action_label: __('Download'),
 						primary_action: (data) => {
 							args.cmd = 'frappe.desk.reportview.export_query';
 							args.file_format_type = data.file_format_type;
+							args.title = this.report_name || this.doctype;
 
 							if(this.add_totals_row) {
 								args.add_totals_row = 1;

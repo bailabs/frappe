@@ -17,7 +17,12 @@ frappe.socketio = {
 
 		//Enable secure option when using HTTPS
 		if (window.location.protocol == "https:") {
-			frappe.socketio.socket = io.connect(frappe.socketio.get_host(port), {secure: true});
+			try{
+			  frappe.socketio.socket = io.connect(frappe.socketio.get_host(port), {secure: true});
+			}
+			catch(e){
+				
+			}
 		}
 		else if (window.location.protocol == "http:") {
 			frappe.socketio.socket = io.connect(frappe.socketio.get_host(port));
@@ -153,7 +158,7 @@ frappe.socketio = {
 	doc_open: function(doctype, docname) {
 		// notify that the user has opened this doc, if not already notified
 		if(!frappe.socketio.last_doc
-			|| (frappe.socketio.last_doc[0]!=doctype && frappe.socketio.last_doc[0]!=docname)) {
+			|| (frappe.socketio.last_doc[0]!=doctype && frappe.socketio.last_doc[1]!=docname)) {
 			frappe.socketio.socket.emit('doc_open', doctype, docname);
 		}
 		frappe.socketio.last_doc = [doctype, docname];

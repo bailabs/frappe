@@ -2,11 +2,14 @@
 // MIT License. See license.txt
 /* eslint-disable no-console */
 
+// __('Modules') __('Domains') __('Places') __('Administration') # for translation, don't remove
+
 frappe.start_app = function() {
 	if(!frappe.Application)
 		return;
 	frappe.assets.check();
 	frappe.provide('frappe.app');
+	frappe.provide('frappe.desk');
 	frappe.app = new frappe.Application();
 };
 
@@ -72,8 +75,6 @@ frappe.Application = Class.extend({
 		// trigger app startup
 		$(document).trigger('startup');
 
-		this.start_notification_updates();
-
 		$(document).trigger('app_ready');
 
 		if (frappe.boot.messages) {
@@ -87,6 +88,9 @@ frappe.Application = Class.extend({
 		}
 
 		this.show_update_available();
+		if (frappe.boot.is_first_startup) {
+			this.setup_onboarding_wizard();
+		}
 
 		if(frappe.ui.startup_setup_dialog && !frappe.boot.setup_complete) {
 			frappe.ui.startup_setup_dialog.pre_show();
@@ -128,6 +132,21 @@ frappe.Application = Class.extend({
 			}
 		}
 		this.link_preview = new frappe.ui.LinkPreview();
+
+		if (!frappe.boot.developer_mode) {
+			setInterval(function() {
+				frappe.call({
+					method: 'frappe.core.page.background_jobs.background_jobs.get_scheduler_status',
+					callback: function(r) {
+						if (r.message[0] == __("Inactive")) {
+							frappe.call('frappe.utils.scheduler.activate_scheduler');
+						}
+					}
+				});
+			}, 300000); // check every 5 minutes
+		}
+
+		this.fetch_tags();
 	},
 
 	setup_frappe_vue() {
@@ -244,54 +263,6 @@ frappe.Application = Class.extend({
 		if(frappe.boot.metadata_version != localStorage.metadata_version) {
 			frappe.assets.clear_local_storage();
 			frappe.assets.init_local_storage();
-		}
-	},
-
-	start_notification_updates: function() {
-		var me = this;
-
-		// refresh_notifications will be called only once during a 1 second window
-		this.refresh_notifications = frappe.utils.debounce(this.refresh_notifications.bind(this), 1000);
-
-		// kickoff
-		this.refresh_notifications();
-
-		frappe.realtime.on('clear_notifications', () => {
-			me.refresh_notifications();
-		});
-
-		// first time loaded in boot
-		$(document).trigger("notification-update");
-
-		// refresh notifications if user is back after sometime
-		$(document).on("session_alive", function() {
-			me.refresh_notifications();
-		});
-	},
-
-	refresh_notifications: function() {
-		var me = this;
-		if(frappe.session_alive && frappe.boot && frappe.boot.home_page !== 'setup-wizard') {
-			if (this._refresh_notifications) {
-				this._refresh_notifications.abort();
-			}
-			this._refresh_notifications = frappe.call({
-				type: 'GET',
-				method: "frappe.desk.notifications.get_notifications",
-				callback: function(r) {
-					if(r.message) {
-						$.extend(frappe.boot.notification_info, r.message);
-						$(document).trigger("notification-update");
-
-						if(frappe.get_route()[0] != "messages") {
-							if(r.message.new_messages.length) {
-								frappe.utils.set_title_prefix("(" + r.message.new_messages.length + ")");
-							}
-						}
-					}
-				},
-				freeze: false
-			});
 		}
 	},
 
@@ -464,6 +435,11 @@ frappe.Application = Class.extend({
 		return frappe.call('frappe.client.get_hooks', { hook: 'app_logo_url' })
 			.then(r => {
 				frappe.app.logo_url = (r.message || []).slice(-1)[0];
+				if (window.cordova) {
+					let host = frappe.request.url;
+					host = host.slice(0, host.length - 1);
+					frappe.app.logo_url = host + frappe.app.logo_url;
+				}
 			});
 	},
 
@@ -506,6 +482,28 @@ frappe.Application = Class.extend({
 	show_update_available: () => {
 		frappe.call({
 			"method": "frappe.utils.change_log.show_update_popup"
+		});
+	},
+
+	setup_onboarding_wizard: () => {
+		var me = this;
+		frappe.call('frappe.desk.doctype.setup_wizard_slide.setup_wizard_slide.get_onboarding_slides').then(res => {
+			if (res.message) {
+				let slides = res.message;
+				if (slides.length) {
+					frappe.require("assets/frappe/js/frappe/ui/onboarding_dialog.js", () => {
+						me.progress_dialog = new frappe.setup.OnboardingDialog({
+							slides: slides
+						});
+						me.progress_dialog.show();
+						frappe.call({
+							method: "frappe.desk.page.setup_wizard.setup_wizard.reset_is_first_startup",
+							args: {},
+							callback: () => {}
+						});
+					});
+				}
+			}
 		});
 	},
 
@@ -575,6 +573,10 @@ frappe.Application = Class.extend({
 			frappe.show_alert(message);
 		});
 	},
+
+	fetch_tags() {
+		frappe.tags.utils.fetch_tags();
+	}
 });
 
 frappe.get_module = function(m, default_module) {

@@ -1,10 +1,22 @@
 var app = require('express')();
-var server = require('http').Server(app);
+// var server = app.listen(9000)
+// var io = require('socket.io').listen(server);
+//var server = require('https').Server(app);
+
+var cookie = require('cookie')
+var fs = require('fs');
+let options = {
+    key: fs.readFileSync("/etc/nginx/ssl/myserver.key"),
+    cert: fs.readFileSync("/etc/nginx/ssl/ssl-bundle.crt")
+  };
+var server = require('https').Server(options,app);
 var io = require('socket.io')(server);
 var cookie = require('cookie')
 var fs = require('fs');
 var path = require('path');
+var redis = require("redis");
 var request = require('superagent');
+
 var { get_conf, get_redis_subscriber } = require('./node_utils');
 
 var conf = get_conf();
